@@ -37,9 +37,7 @@ namespace mongo {
      * Internal secret key info.
      */
     struct AuthInfo {
-        AuthInfo();
-        UserName user;
-        std::string pwd;
+        User* user;
         BSONObj authParams;
     };
     extern AuthInfo internalSecurity; // set at startup and not changed after initialization.
@@ -127,11 +125,12 @@ namespace mongo {
         ActionSet getAllUserActions() const;
 
         /**
-         *  Returns the User object for the given userName in the out param "acquiredUser".
+         *  Returns the User object for the given userName in the out parameter "acquiredUser".
          *  If the user cache already has a user object for this user, it increments the refcount
          *  on that object and gives out a pointer to it.  If no user object for this user name
          *  exists yet in the cache, reads the user's privilege document from disk, builds up
-         *  a User object, sets the refcount to 1, and gives that out.
+         *  a User object, sets the refcount to 1, and gives that out.  The returned user may
+         *  be invalid by the time the caller gets access to it.
          *  The AuthorizationManager retains ownership of the returned User object.
          *  On non-OK Status return values, acquiredUser will not be modified.
          */
@@ -142,6 +141,12 @@ namespace mongo {
          * deletes the User.  Caller must stop using its pointer to "user" after calling this.
          */
         void releaseUser(User* user);
+
+        /**
+         * Inserts the given user directly into the _userCache.  Used to add the internalSecurity
+         * user into the cache at process startup.
+         */
+        void addInternalUser(User* user);
 
         /**
          * Initializes the user cache with User objects for every v0 and v1 user document in the

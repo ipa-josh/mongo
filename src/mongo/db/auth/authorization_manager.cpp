@@ -38,10 +38,20 @@
 
 namespace mongo {
 
-    AuthInfo::AuthInfo() {
-        user = UserName("__system", "local");
-    }
     AuthInfo internalSecurity;
+
+    MONGO_INITIALIZER(SetupInternalSecurityUser)(InitializerContext* context) {
+        User* user = new User(UserName("__system", "local"));
+
+        user->incrementRefCount(); // Pin this user so the ref count never drops below 1.
+        ActionSet allActions;
+        allActions.addAllActions();
+        user->addPrivilege(Privilege(PrivilegeSet::WILDCARD_RESOURCE, allActions));
+
+        internalSecurity.user = user;
+
+        return Status::OK();
+    }
 
     const std::string AuthorizationManager::SERVER_RESOURCE_NAME = "$SERVER";
     const std::string AuthorizationManager::CLUSTER_RESOURCE_NAME = "$CLUSTER";
@@ -655,6 +665,7 @@ namespace {
         unordered_map<UserName, User*>::iterator it = _userCache.find(userName);
         if (it != _userCache.end()) {
             fassert(16914, it->second);
+            fassert(17003, it->second->isValid());
             it->second->incrementRefCount();
             *acquiredUser = it->second;
             return Status::OK();
@@ -701,6 +712,11 @@ namespace {
             }
             delete user;
         }
+    }
+
+    void AuthorizationManager::addInternalUser(User* user) {
+        boost::lock_guard<boost::mutex> lk(_lock);
+        _userCache.insert(make_pair(user->getName(), user));
     }
 
     /**
@@ -814,6 +830,10 @@ namespace {
     void AuthorizationManager::_invalidateUserCache_inlock() {
         for (unordered_map<UserName, User*>::iterator it = _userCache.begin();
                 it != _userCache.end(); ++it) {
+            if (it->second->getName() == internalSecurity.user->getName()) {
+                // Don't invalidate the internal user
+                continue;
+            }
             it->second->invalidate();
             // Need to decrement ref count and manually clean up User object to prevent memory leaks
             // since we're pinning all User objects by incrementing their ref count when we
@@ -870,7 +890,7 @@ namespace {
 
                     if (source == dbname || source == "$external") {
                         status = _initializeUserCredentialsFromPrivilegeDocument(user,
-                                                                                        privDoc);
+                                                                                 privDoc);
                         if (!status.isOK()) {
                             return status;
                         }

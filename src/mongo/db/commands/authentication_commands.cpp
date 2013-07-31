@@ -153,7 +153,7 @@ namespace mongo {
 
     Status CmdAuthenticate::_authenticateCR(const UserName& user, const BSONObj& cmdObj) {
 
-        if (user == internalSecurity.user && cmdLine.clusterAuthMode == "x509") {
+        if (user == internalSecurity.user->getName() && cmdLine.clusterAuthMode == "x509") {
             return Status(ErrorCodes::AuthenticationFailed,
                           "Mechanism x509 is required for internal cluster authentication");
         }
@@ -161,7 +161,7 @@ namespace mongo {
         if (!_areNonceAuthenticateCommandsEnabled) {
             // SERVER-8461, MONGODB-CR must be enabled for authenticating the internal user, so that
             // cluster members may communicate with each other.
-            if (user != internalSecurity.user) {
+            if (user != internalSecurity.user->getName()) {
                 return Status(ErrorCodes::BadValue, _nonceAuthenticateCommandsDisabledMessage);
             }
         }
@@ -195,17 +195,16 @@ namespace mongo {
             }
         }
 
-        BSONObj userObj;
-        string pwd;
-        Status status = getGlobalAuthorizationManager()->getPrivilegeDocument(
-                user.getDB().toString(), user, &userObj);
+        User* userObj;
+        Status status = getGlobalAuthorizationManager()->acquireUser(user, &userObj);
         if (!status.isOK()) {
             // Failure to find the privilege document indicates no-such-user, a fact that we do not
             // wish to reveal to the client.  So, we return AuthenticationFailed rather than passing
             // through the returned status.
             return Status(ErrorCodes::AuthenticationFailed, status.toString());
         }
-        pwd = userObj["pwd"].String();
+        string pwd = userObj->getCredentials().password;
+        getGlobalAuthorizationManager()->releaseUser(userObj);
 
         md5digest d;
         {
@@ -249,12 +248,14 @@ namespace mongo {
         }
         else {
             StringData srvSubjectName = getSSLManager()->getServerSubjectName();
-            StringData srvClusterId = srvSubjectName.substr(0, srvSubjectName.find("/CN")+1);
-            StringData peerClusterId = subjectName.substr(0, subjectName.find("/CN")+1);
+            StringData srvClusterId = srvSubjectName.substr(srvSubjectName.find(",OU="));
+            StringData peerClusterId = subjectName.substr(subjectName.find(",OU="));
+
+            fassert(17002, !srvClusterId.empty() && srvClusterId != srvSubjectName);
 
             // Handle internal cluster member auth, only applies to server-server connections 
             if (srvClusterId == peerClusterId) {
-                if (cmdLine.clusterAuthMode == "keyfile") {
+                if (cmdLine.clusterAuthMode.empty() || cmdLine.clusterAuthMode == "keyfile") {
                     return Status(ErrorCodes::AuthenticationFailed,
                                   "X509 authentication is not allowed for cluster authentication");
                 }
