@@ -683,7 +683,7 @@ elif "win32" == os.sys.platform:
         # /O2:  optimize for speed (as opposed to size)
         # /Oy-: disable frame pointer optimization (overrides /O2, only affects 32-bit)
         # /MT:  use the multithreaded, static version of the run-time library (LIBCMT.lib)
-        env.Append( CCFLAGS= ["/O2", "/Oy-", "/MT"] )
+        env.Append( CCFLAGS= ["/O2", "/Oy-", "/MD"] )
 
         # /DEBUG will tell the linker to create a .pdb file
         # which WinDbg and Visual Studio will use to resolve
